@@ -34,7 +34,7 @@ summary(m)
 # Now we will reproduce the same results with a neural network with one neuron
 
 network <- keras_model_sequential() %>% 
-  layer_dense(units = 1)
+  layer_dense(units = 1, input_shape = 1)
 
 network %>% 
   compile(optimizer = "rmsprop", loss = "mse")
