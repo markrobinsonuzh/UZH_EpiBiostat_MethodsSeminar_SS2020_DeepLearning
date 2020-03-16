@@ -1,0 +1,226 @@
+---
+title: "Exercise 2"
+author: "Methods seminar: Deep Learning"
+date: "18/03/2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(8)
+```
+
+## Prediction of binary outputs
+
+We will start the exercise by creating a dataset that is easy to predict with a logistic regression.
+The idea is that you solve the problem using a logistic regression as well as a neural network. Afterwards, you will compare the results.
+
+To create such a dataset, we will use two continuous explanatory variables (x, y). The aim is to classify the points into setA or setB.
+
+First, we import the libraries:
+
+```{r, message=FALSE}
+library(keras)
+library(ggplot2)
+library(MASS)
+```
+
+Next, we produce random samples following a multivariate normal distribution:
+```{r}
+setA <- mvrnorm(100, mu=c(1, 2), Sigma=matrix(c(1,0.5,0,1), nrow=2, ncol=2))
+setB <- mvrnorm(100, mu=c(2, 0), Sigma=matrix(c(1, 0.5, 0.5, 1), nrow=2, ncol=2))
+
+Predictors <- rbind(setA, setB)
+Target <- c(rep(0, 100), rep(1, 100))
+
+plot(setA, col="red", pch = 16, xlim = c(-3, 6), ylim = c(-4, 5), xlab = "x", ylab = "y", main = "Dataset")
+points(setB, col="blue", pch = 16)
+```
+
+a) Fit a logistic regression model, using glm() function with family="binomial". The response variable must be an indicator of setA (0) or setB (1), and the predictor variables are "x", "y". To do that, data are saved into "Target" and "Predictors", respectively.
+
+```{r, include=FALSE, echo = F}
+log_mod <- glm(Target ~ Predictors , family = "binomial")
+summary(log_mod)
+```
+
+b) Show the results of your fit in a plot. If you do it properly, your plot should be similar to the following:
+```{r, echo = F}
+plot(setA, col="red", pch = 16, xlim = c(-3, 6), ylim = c(-4, 5), xlab = "x", ylab = "y", main = "Result of logistic regression")
+points(setB, col="blue", pch = 16)
+points(Predictors[predict(log_mod) > 0,], pch = 4, col = "blue")
+points(Predictors[predict(log_mod) < 0,], pch = 4, col = "red")
+
+points(x = Predictors[,1], y = -log_mod$coefficients[2]/log_mod$coefficients[3]*Predictors[,1] - log_mod$coefficients[1]/log_mod$coefficients[3], type = "l", col = "black", lwd = 2)
+```
+
+As shown, the logistic regression is a good fit. Let's see how a neural network would perform.
+
+c) Build a keras model that is able to solve a binary classification problem. Use only one layer. It is important that you think about the activation function and the input shape.
+
+If you have questions, you can check the code below.
+
+```{r}
+network <- keras_model_sequential() %>% 
+  layer_dense(units = 1, input_shape=2, activation = 'sigmoid')
+
+network %>%
+  compile(optimizer = optimizer_rmsprop(lr=0.01), loss = "binary_crossentropy")
+```
+
+d) Using your network, try to predict whether the data points belong to setA (0) or setB (1). For that, use a minimum of 200 epochs.
+To speed up your computations, we recommend to use a batch size of ~16.
+Save the predictions in a variable and plot the results at the end.
+
+If you succeed, your final plot should be similar to the following:
+
+```{r, echo = F}
+history <- network %>% 
+  fit(Predictors, Target, epochs = 200, batch_size = 16)
+
+plot(history, metrics = "loss", smooth = F)
+```
+
+e) Show the results of your keras model in a plot, as you did in b). If you do it properly, your plot should be similar to the following:
+```{r, echo = F, warning=FALSE}
+Network_pred = network %>% predict_classes(Predictors)
+plot(setA, col="red", pch = 16, xlim = c(-3, 6), ylim = c(-4, 5), xlab = "x", ylab = "y", main = "Result of keras model")
+points(setB, col="blue", pch = 16)
+points(Predictors[Network_pred == 1,], pch = 4, col = "blue")
+points(Predictors[Network_pred == 0,], pch = 4, col = "red")
+
+interc = network$get_weights()[[2]]
+a = network$get_weights()[[1]][1]
+b = network$get_weights()[[1]][2]
+points(x = Predictors[,1], y = -a/b*Predictors[,1] - interc/b, type = "l", col = "black", lwd = 2)
+```
+
+
+f) Show the coefficients of the logistic model and compare them to the neural network. Are they comparable?
+
+At the end of the exercise, you should get these outputs (or similar ones):
+
+```{r, echo = F}
+coef(log_mod) # we arrive at virtually the same results after training long enough
+network$get_weights()
+```
+
+
+
+## Deep learning with the IMDB dataset
+
+Here we will work with a well-known dataset: the IMDB dataset.
+
+This case is a bit more complex, as data are series of integers that represent a sentence.
+Therefore, sentences are encoded so that each word is related to a number.
+Sentences can be cathegorized as good (1) or bad (0). For example: "we need peace in the world" is good (1). By contrast, "we need violence" is bad (0).
+
+Having understood this, let's import the dataset:
+
+```{r}
+imdb <- dataset_imdb(num_words = 10000)
+```
+
+Next, we need to split the data into training and test. This is needed to check the performance of the model.
+
+Please, use the commands below to do so.
+
+```{r}
+# Split data into training and test. This is needed to check the performance of the model.
+c(c(train_data, train_targets), c(test_data, test_targets)) %<-% imdb
+```
+
+If you have a look at the training data, you will quickly notice that each element (sample) has a different lenght. Therefore, it is not similar to a tensor.
+This is because sentences can be longer or shorter.
+
+To fit a keras model, however, we need to convert the data into a tensor. For that, we will use a method named "One-hot encode".
+You can find more information about this method here:
+
+https://hackernoon.com/what-is-one-hot-encoding-why-and-when-do-you-have-to-use-it-e3c6186d008f
+
+Please, use the following commands to prepare your data using the "One-hot encode" method.
+```{r}
+vectorize_sequences <- function(sequences, dimension = 10000) {
+  results <- matrix(0, nrow = length(sequences), ncol = dimension)
+  for (i in 1:length(sequences))
+    results[i, sequences[[i]]] <- 1
+  results
+}
+x_train <- vectorize_sequences(train_data)
+x_test <- vectorize_sequences(test_data)
+```
+
+At this point, you are ready to build your neural network. It is important to notice that we limited the data import to a maximum of 10000 words. This means that each sample (sentence) contains only integers between 1 and 10000. Thus, you already know the input shape of your network.
+
+a) Build a neural network using 3 layers. Use 16 neurons in the first 2 layers, and 1 neuron in the last one.
+
+If you have questions, you can have a look at the following code:
+
+```{r}
+model <- keras_model_sequential() %>% 
+  layer_dense(units = 16, activation = "relu", input_shape = c(10000)) %>% 
+  layer_dense(units = 16, activation = "relu") %>% 
+  layer_dense(units = 1, activation = "sigmoid")
+  
+model %>% compile(optimizer = "rmsprop", loss = "binary_crossentropy", metrics = c("accuracy"))
+```
+
+b) Train your network using the IMDB dataset. Save outputs in another variable, and use the validation data.
+At the end, plot the accuracy of the training and test data.
+
+If succeed, your accuracy plot should look similar to this one:
+```{r, echo = F}
+history <- model %>% fit(
+  x_train,
+  train_targets,
+  epochs = 20,
+  batch_size = 512,
+  validation_data = list(x_test, test_targets))
+
+plot(history, metrics = "accuracy")
+```
+
+c) What is the final accuracy of your network? Do you think the model is overfitted?
+
+As mentioned in the theory lectures, the design of a neural network is extremely important. Thus, a bad design will lead to poor outcomes.
+
+When training a network, tensors go back and forth according to the requirements that are specified in the design.
+Sometimes, it is useful to drop out some of the tensor features when the tensor goes a step back.
+
+This simplifies the operatations and in some cases leads to better outcomes.
+
+d) Here we propose a new network, in which the dropout rate is 0.5. Please, have a look at it. Make sure you understand the design.
+```{r}
+model <- keras_model_sequential() %>% 
+  layer_dense(units = 16, activation = "relu", input_shape = c(10000)) %>% 
+  layer_dropout(rate=0.5) %>%
+  layer_dense(units = 16, activation = "relu") %>% 
+  layer_dropout(rate=0.5) %>%
+  layer_dense(units = 1, activation = "sigmoid")
+  
+model %>% compile(optimizer = "rmsprop", loss = "binary_crossentropy", metrics = c("accuracy"))
+```
+
+e) Use the network above to fit your IMDB data. Plot the accuracy of the training and test data, as you did in b). Did the final accuracy improve? How about the overfit?
+
+If you succeed, your final plot should look similar to the plot below:
+```{r, echo = F}
+history_2 <- model %>% fit(
+  x_train,
+  train_targets,
+  epochs = 20,
+  batch_size = 512,
+  validation_data = list(x_test, test_targets))
+plot(history_2, metrics = "accuracy")
+```
+
+f) Build a network with 1, 2 and 3 layers. Try using 8, 16 and 32 units per layer. Then, predict your test data.
+At the end, fill this table with the accuracy outputs and check which network leads to the best accuracy.
+
+| num layers/hidden units | 8 | 16 | 32 |
+|-------------------------|---|----|----|
+| 1                       |   |    |    |
+| 2                       |   |    |    |
+| 3                       |   |    |    |
