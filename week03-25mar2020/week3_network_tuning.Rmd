@@ -1,0 +1,510 @@
+---
+title: "Network tuning"
+author: "Almut Luetge, Julian Baer"
+date: "23 March 2020"
+output:
+  html_document:
+    code_folding: show
+    number_sections: no
+    toc: yes
+    toc_depth: 4
+    toc_float: true
+    collapsed: no
+    smooth_scroll: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Network tuning
+This demo and exercise goes through the most common parameters to optimize a 
+neural network framework in keras and is following closely one of keras own examples at
+https://keras.rstudio.com/articles/tutorial_overfit_underfit.html.  
+
+#### Main objectives are:  
++ Setting up a "basic" neural network
++ Monitoring it's performance using model validation
++ Fine-tune the network using network regularization  
+  
+Libraries
+```{r libraries, warning = FALSE}
+suppressPackageStartupMessages({
+    library(keras)
+    library(ggplot2)
+    library(tibble)
+    library(dplyr)
+    library(tidyr)
+})
+
+```
+
+### Dataset
+We use the __Internet Movie DataBase (IMDB)__ dataset here. It consists of 50000 highly polarized movie reviews,
+that should be classified into positive and negative from a model. So here we face a single label binary classification problem. This will guide major decisions on how to build our model. They are already split into *25,000 reviews* for *training* and *25,000 reviews* for *testing*, each set consisting of 50% negative and 50% positive reviews. So the training dataset should be representative for the test dataset.
+
+We restrict ourselves to the 10000 most prevalent words.
+```{r data}
+
+set.seed(2503)
+
+#extract first 10'000 words
+num_words <- 10000
+imdb <- dataset_imdb(num_words = num_words)
+
+# Define your training data: input tensors and target tensors
+c(c(train_data, train_labels), c(test_data, test_labels)) %<-% imdb
+
+#free some ram
+rm(imdb)
+gc()
+
+```
+
+
+## Set up a "standard" keras workflow/basic network
+
+### 1. Data preparation and setup
+#### Data preparation:  
++ vectorization
++ normalization
++ handling missing values
++ feature extraction/engineering
+
+
+The reviews (sequences of words) have already been preprocessed into sequences of integers, where each integer stands for a specific word in a dictionary. The corresponding label are encoded into *0* and *1*, where 0 means a *negative* and 1 *positive* review.  
+```{r data preparation}
+
+# Vectorize data to bring them into tensors of floating-point data
+multi_hot_sequences <- function(sequences, dimension) {
+  multi_hot <- matrix(0, nrow = length(sequences), ncol = dimension)
+  for (i in 1:length(sequences)) {
+    multi_hot[i, sequences[[i]]] <- 1
+  }
+  multi_hot
+}
+
+#apply custom multi hot function
+train_data <- multi_hot_sequences(train_data, num_words)
+test_data <- multi_hot_sequences(test_data, num_words)
+test_labels <- as.numeric(test_labels)
+train_labels <- as.numeric(train_labels)
+
+```
+
+We don't need to *normalize* our data here as they represent sequences here, but for other datasets this can be key. 
+There are no *missing values* in this dataset, but we already did some kind of *feature extraction/engineering* by choosing the first 10000 words. Less frequent words contain less information to learn from.  
+  
+  
+#### Defining an evaluation protocol
+
+To fine tune our model we need __training data__ to learn the model, __test data__ to finally determine the models performance and __validation data__. These are used to evaluate the models performance using fine tuning. We can't use the test data for this, as information from the "fine-tuning" leak into the model training. We can also choose between different validation strategies. If data size is a major limitation *k-fold validation* or *iterative k-fold-validation* can increase the power. Here we pick a *simple hold-out validation*.
+```{r validation data}
+
+#get index of 10'000 randomly selected reviews from the train data
+val_indices <- sample(1:nrow(train_data), 10000)
+
+#extract these reviews and remove from train data
+val_data <- train_data[val_indices,]
+partial_train_data <- train_data[-val_indices,]
+val_labels <- train_labels[val_indices]
+partial_train_labels <- train_labels[-val_indices]
+
+```
+
+
+
+### 2. Model setup
+Define a model that does better than baseline.
+Our parameter choices are mainly driven by the classification problem. 
+We have a __binary classification__ problem with a __single value__, so we pick __one unit__ and __sigmoid activation__ for the last layer.
+__Relu__ activation for the other layers constrains our tensors to positive values, but other choices are possible.
+Findning an optimal size and number is not trivial. If we pick to many units the model will overfit and if we pick to few units the model will underfit. We start with a more complex (larger) baseline model and will further evaluate this using model validation. 
+```{r define network, message=FALSE, warning=FALSE}
+
+#define model
+baseline_model <- 
+  keras_model_sequential() %>%
+  layer_dense(units = 16, activation = "relu", input_shape = 10000) %>%
+  layer_dense(units = 16, activation = "relu") %>%
+  layer_dense(units = 1, activation = "sigmoid")
+
+```
+
+### 3. Model compilation
+Configure the learning process by choosing a loss function, an optimizer, 
+and which metrics to monitor during training.
+
+As we model a binary classification we pick **binary_crossentropy** as loss function and monitor accuracy during training.
+```{r compilation}
+
+#compile model
+baseline_model %>% compile(
+  optimizer = "adam",
+  loss = "binary_crossentropy",
+  metrics = c("accuracy")
+)
+
+#get number of parameters
+baseline_model %>% summary()
+
+```
+
+### 4. Learning
+Iterate on your training data by calling the fit() method of your model
+
+We start with a baseline model and evaluate it's performance on the validation dataset:
+
+```{r evaluate baseline model, message=FALSE, warning=FALSE}
+
+#fit model
+history <- baseline_model %>% fit(
+  partial_train_data,
+  partial_train_labels,
+  epochs = 20,
+  batch_size = 512,
+  validation_data = list(val_data, val_labels),
+  verbose=1
+)
+
+#clean up
+rm(baseline_model)
+gc()
+
+#visualize model
+plot(history)
+
+```
+
+We see a fair amount of overfitting happening quickly. The most straightforward way, at least conceptually, is getting more training data.
+In real world problems, this usually not so easy. Therefore, clever people invented mathematical approaches to reduce overfitting.
+Let's explore some basic methods!
+
+
+#### Model capacity: reduce the memorization ability
+
+Model capacity is a not clearly defined term which is describing the complexity of a model and it's capacity to learn and memorize
+patterns in the training data. The more capacity a model is given, the more likely it is to overfit to the training data as it
+is able to memorize every unique pattern. If the training data is scarce, reducing a model's capacity might help reduce overfitting issues.
+Model capacity can be understood as the number of trainable parameters a model has. The number of trainable parameters is a combination
+of **input_shape**, **number of layers** and **number of units per layer**. So, we can drop some features of the training data (not covered here,
+this is part of what is called data pre-processing and feature engineering). Instead, we reduce the number of units (neurons) per layer.
+This should lead to a reduced capacity of the model and therefore prevent overfitting.
+
+Let's create such a smaller model
+
+```{r smaller model, message=F, warning=F}
+
+#define model
+smaller_model <- 
+  keras_model_sequential() %>%
+  layer_dense(units = 4, activation = "relu", input_shape = 10000) %>%
+  layer_dense(units = 4, activation = "relu") %>%
+  layer_dense(units = 1, activation = "sigmoid")
+
+#compile model
+smaller_model %>% compile(
+  optimizer = "adam",
+  loss = "binary_crossentropy",
+  metrics = list("accuracy")
+)
+
+#get number of parameters
+smaller_model %>% summary()
+
+#fit model
+smaller_history <- smaller_model %>% fit(
+  partial_train_data,
+  partial_train_labels,
+  epochs = 20,
+  batch_size = 512,
+  validation_data = list(val_data, val_labels),
+  verbose = 1
+)
+
+#clean up
+rm(smaller_model)
+gc()
+
+#plot
+plot(smaller_history)
+
+
+```
+
+And compare the smaller model to the baseline model to see how it affects loss in training and validation data.
+
+```{r compare small model, warning=F, message=F}
+
+#combine history of 2 models into a data.frame
+compare_cx <- data.frame(
+  baseline_train = history$metrics$loss,
+  baseline_val = history$metrics$val_loss,
+  smaller_train = smaller_history$metrics$loss,
+  smaller_val = smaller_history$metrics$val_loss
+) %>%
+  rownames_to_column() %>%
+  mutate(rowname = as.integer(rowname)) %>%
+  gather(key = "type", value = "value", -rowname)
+
+#plot both models  
+ggplot(compare_cx, aes(x = rowname, y = value, color = type)) +
+  geom_line() +
+  xlab("epoch") +
+  ylab("loss")
+
+#clean up
+rm(smaller_history)
+rm(compare_cx)
+gc()
+
+```
+
+
+#### Dropouts
+
+Ok, we saw that reducing model capacity helps to reduce overfitting issues. Another often used method are dropout layers.
+Dropout layers randomly "drop out" (i.e. set to zero) some of the features of the previous layer to introduce some noise.
+This was shown to reduce the chance that the model fit learns specific features of the training data.
+The user sets the drop-out rate which is the fraction of features which are dropped. Common values range from 0.2 to 0.5.
+Let's add two high fraction (0.6) dropout layers in our baseline model. This might introduce underfitting!
+Also, note that R gives you a warning that 0.6 is too high and should be reduced...
+
+```{r dropout model, message=F}
+
+#define model
+dropout_model <- 
+  keras_model_sequential() %>%
+  layer_dense(units = 16, activation = "relu", input_shape = 10000) %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 16, activation = "relu") %>%
+  layer_dropout(0.6) %>%
+  layer_dense(units = 1, activation = "sigmoid")
+
+#compile
+dropout_model %>% compile(
+  optimizer = "adam",
+  loss = "binary_crossentropy",
+  metrics = list("accuracy")
+)
+
+#fit
+dropout_history <- dropout_model %>% fit(
+  train_data,
+  train_labels,
+  epochs = 20,
+  batch_size = 512,
+  validation_data = list(test_data, test_labels),
+  verbose = 1
+)
+
+#clean up
+rm(dropout_model)
+gc()
+
+#plot
+plot(dropout_history)
+
+```
+
+Nice! Let's look at the loss of the baseline and dropout model in one graph
+
+```{r compare dropout model, warning=F, message=F}
+
+#combine history of 2 models into a data.frame
+compare_cx <- data.frame(
+  baseline_train = history$metrics$loss,
+  baseline_val = history$metrics$val_loss,
+  dropout_train = dropout_history$metrics$loss,
+  dropout_val = dropout_history$metrics$val_loss
+) %>%
+  rownames_to_column() %>%
+  mutate(rowname = as.integer(rowname)) %>%
+  gather(key = "type", value = "value", -rowname)
+  
+#plot
+ggplot(compare_cx, aes(x = rowname, y = value, color = type)) +
+  geom_line() +
+  xlab("epoch") +
+  ylab("loss")
+
+#clean up
+rm(dropout_history)
+rm(dropout_model)
+rm(compare_cx)
+gc()
+
+```
+
+And again, dropout works well to reduce overfiting but we still have discrepancy between
+the train and eval data.
+
+
+#### Early stopping
+
+The longer a model can run, the more time it has to learn unique patterns in the training set.
+Especially if a model fit is done for a couple hundred epochs, the chance to plateau regarding loss is high.
+Even worse, the loss of the training data may stagnate but the loss of the validation set is increasing!
+Therefore, one can implement a early stopping callback function into the model fit.
+Callback functions are injectable functions that are evaluated during the model fit.
+
+__!WARNING!__
+The early stopping is extremely RAM-intenisve because it is storing every model for as many epochs as
+you speciy in the patience parameter. If you want to run it, monitor your RAM and stop the fit before you kill your computer :)
+
+# ```{r early stop model, warning=F, message=F}
+# 
+# # The patience parameter is the amount of epochs to check for improvement.
+# early_stop <- callback_early_stopping(monitor = "val_loss", patience = 10)
+# 
+# #define model
+# stop_model <- 
+#   keras_model_sequential() %>%
+#   layer_dense(units = 4, activation = "relu", input_shape = 10000) %>%
+#   layer_dense(units = 4, activation = "relu") %>%
+#   layer_dense(units = 1, activation = "sigmoid")
+# 
+# #compile model
+# stop_model %>% compile(
+#   optimizer = "adam",
+#   loss = "binary_crossentropy",
+#   metrics = c("accuracy")
+# )
+# 
+# #fit model
+# history_stop <- stop_model %>% fit(
+#   train_data,
+#   train_labels,
+#   epochs = 40,
+#   batch_size=512,
+#   validation_data = list(test_data, test_labels),
+#   verbose = 1,
+#   callbacks = list(early_stop)
+# )
+# 
+# #plot
+# plot(history_stop)
+# 
+# #clean up
+# rm(stop_model)
+# rm(history_stop)
+# gc()
+# 
+# ```
+
+
+
+#### Network regularization
+
+A more sophisticated method is weight regularization: adding to the loss function of the network a cost associated with having large weights.  
+  
+Here we show the effect of **L2-regularization** on the model's overfitting. L2 regularization adds a cost proportional to the squared value of weight coefficients. We can also determine the cost added per weight coefficient - in this case it's 1 percent of the coefficients value.
+```{r weight regularization}
+
+#define model
+l2_model <- keras_model_sequential() %>%
+  layer_dense(units = 16, kernel_regularizer = regularizer_l2(0.01),
+              activation = "relu", input_shape = c(10000)) %>%
+  layer_dense(units = 16, kernel_regularizer = regularizer_l2(0.01),
+              activation = "relu") %>%
+  layer_dense(units = 1, activation = "sigmoid")
+
+```
+
+
+
+We can check the effect of L2 generelization the same way as before using the same validation data set:
+```{r  run l2 model, message=FALSE, warning=FALSE}
+
+#compile
+l2_model %>% compile(
+  optimizer = "adam",
+  loss = "binary_crossentropy",
+  metrics = c("accuracy")
+)
+
+#fit
+history_l2 <- l2_model %>% fit(
+  partial_train_data,
+  partial_train_labels,
+  epochs = 20,
+  batch_size = 512,
+  validation_data = list(val_data, val_labels)
+)
+
+#clean up
+rm(l2_model)
+gc()
+
+#plot
+plot(history_l2)
+
+#clean up
+rm(history_l2)
+gc()
+
+```
+
+This looks better, but still the model performs better on the training data than on the validation data. So most learning after epoch 3 is not generelizable. Try to further improve the models performance and generelizability by fine tuning it's architecture.
+#### Exercise fine tuning:  
++ change __weight coefficients cost__ or form (*regularizer_l1(?)*) 
++ change __dropout__ (*layer_dropout(rate = ?)*) 
++ change __units__
++ __number of layers__
++ __batch size__
++ __learning rate__
++ ...
+
+  
+Try to remember how many different models you tried!
+
+
+### 5.Test the final model 
+
+What is the best model we can find in class? What parameters had most impact on the model's performance? We can train it on the test and validation dataset and determine our final model's accuracy on the test dataset:  
+
+```{r train and test final model, message= FALSE, warning = FALSE}
+
+#free some ram
+remove(partial_train_data)
+remove(partial_train_labels)
+gc()
+
+#define model
+final_model <- keras_model_sequential() %>%
+    layer_dense(units = 8, kernel_regularizer = regularizer_l1_l2(0.01),
+                activation = "relu", input_shape = c(10000)) %>%
+    layer_dropout(0.4) %>% 
+    layer_dense(units = 8, kernel_regularizer = regularizer_l1_l2(0.01),
+                activation = "relu") %>%
+    layer_dropout(0.4) %>%
+    layer_dense(units = 1, activation = "sigmoid")
+
+#compile
+final_model %>% compile(
+  optimizer = "adam",
+  loss = "binary_crossentropy",
+  metrics = c("accuracy")
+)
+
+#fit on complete train_data
+final_model %>% fit(
+  train_data,
+  train_labels,
+  epochs = 20,
+  batch_size = 512
+)
+
+#and evaluate on test data
+results <- final_model %>% evaluate(test_data, test_labels)
+results
+
+```
+
+Is this what you expected? What could have happened, if the test accuracy differs from the validation accuracy?
+
+
+```{r session info}
+sessionInfo()
+```
+
