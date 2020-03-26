@@ -3,25 +3,33 @@ title: "Session 4: Variational autoencoders"
 author: "Methods seminar: Deep Learning"
 date: "01/04/2020"
 output:
-  html_document
+  html_document:
+    code_folding: show
+    number_sections: no
+    toc: yes
+    toc_depth: 4
+    toc_float: true
+    collapsed: no
+    smooth_scroll: yes
 ---
 
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(warning = FALSE, message = FALSE)
-solution = TRUE
+
+solution = FALSE
 ```
 
 ***
 
 Based on [Deep Learning with R](https://www.manning.com/books/deep-learning-with-r) [exercises](https://github.com/jjallaire/deep-learning-with-r-notebooks/edit/master/notebooks/8.4-generating-images-with-vaes.Rmd)
 
-
 ***
 
 Required packages for the exercise: 
 
 ```{r}
+
 suppressPackageStartupMessages({
   library(keras)
   library(R6)
@@ -30,10 +38,9 @@ suppressPackageStartupMessages({
 
 ```
 
+The following code shows in details how VAE is implemented. **You don't need to read/ understand each single line of code** as the exercises in the last sections will only focus on some parts. This session aims to show you how VAE works 'under the hood' but wrappers are of course available on internet. 
 
 ## Default Variational autoencoder
-
-The following code shows in details how VAE is implemented. You don't need to read/ understand all chunks as the exercises in the next session will only focus on some parts. 
 
 Let's quickly go over a Keras implementation of a VAE. Schematically, it looks like this:
 
@@ -56,7 +63,25 @@ model <- keras_model(input_img, reconstructed_img)
 
 ### Encoder 
 
+In this example we will train our model based on the `MNIST` dataset (handwritten digits): 
+
+```{r}
+mnist <- dataset_mnist() 
+c(c(x_train, y_train), c(x_test, y_test)) %<-% mnist
+
+x_train <- x_train / 255
+x_train <- array_reshape(x_train, dim =c(dim(x_train), 1))
+
+x_test <- x_test / 255
+x_test <- array_reshape(x_test, dim =c(dim(x_test), 1))
+```
+
 Here is the encoder network we will use: a very simple convnet which maps the input image `x` to two vectors, `z_mean` and `z_log_variance`.
+
+Here we define: 
++ the input layer, which will recieve images of size 28 x 28 x 1 (greyscale color only)
++ convolutional layers, `layer_conv_2d`
++ a flattening layer that will shrink the input to a latent vector. 
 
 ```{r}
 
@@ -90,12 +115,12 @@ z_log_var <- x %>%
   layer_dense(units = latent_dim)
 
 encoder <- keras_model(input_img, z_mean)
-
+encoder
 ```
 
 ### Latent space
 
-Next is the code for using `z_mean` and `z_log_var`, the parameters of the statistical distribution assumed to have produced `input_img`, to generate a latent space point `z`. Here, you wrap some arbitrary code (built on top of Keras backend primitives) into a `layer_lambda()`, which wraps an R function into a layer. 
+Next is the code for using `z_mean` and `z_log_var`, the parameters of the statistical distribution assumed to have produced `input_img`, to generate a latent space point `z`. Here, you wrap some arbitrary code into a `layer_lambda()`, which wraps our function that samples from the latent space into a layer. 
 
 ```{r}
 sampling <- function(args) {
@@ -107,6 +132,7 @@ sampling <- function(args) {
 
 z <- list(z_mean, z_log_var) %>% 
   layer_lambda(sampling)
+z
 ```
 
 ### Decoder 
@@ -138,9 +164,10 @@ decoder <- keras_model(decoder_input, x)
 # We then apply it to `z` to recover the decoded `z`.
 z_decoded <- decoder(z) 
 
+decoder
 ```
 
-The dual loss of a VAE doesn't fit the traditional expectation of a sample-wise function of the form `loss(input, target)`. Thus, we set up the loss by writing a custom layer with internally leverages the built-in `add_loss` layer method to create an arbitrary loss.
+The dual loss of a VAE doesn't fit the traditional expectation of a sample-wise function of the form `loss(input, target)`. Thus, we set up a custom function that integrates the two losses. 
 
 ```{r}
 
@@ -182,7 +209,7 @@ y <- list(input_img, z_decoded) %>%
 
 ```
 
-Finally, we instantiate and train the model. Since the loss has been taken care of in our custom layer, we don't specify an external loss at compile time (`loss = NULL`), which in turns means that we won't pass target data during training (as you can see we only pass `x_train` to the model in `fit`).
+Finally, we instantiate and train the model. Since the loss has been taken care of in our custom layer, we don't specify an external loss at compile time (`loss = NULL`), which in turns means that we won't pass target data during training (as you will see, we only pass `x_train` to the model in `fit`).
 
 ```{r}
 vae <- keras_model(input_img, y)
@@ -193,15 +220,7 @@ vae %>% compile(
   experimental_run_tf_function = FALSE 
 )
 
-# Trains the VAE on MNIST digits
-mnist <- dataset_mnist() 
-c(c(x_train, y_train), c(x_test, y_test)) %<-% mnist
-
-x_train <- x_train / 255
-x_train <- array_reshape(x_train, dim =c(dim(x_train), 1))
-
-x_test <- x_test / 255
-x_test <- array_reshape(x_test, dim =c(dim(x_test), 1))
+vae
 
 ```
 
@@ -211,90 +230,118 @@ For time purpose, we already trained the model so that you can simply load it.
 
 ```{r, echo=TRUE, results='hide', eval=FALSE}
 
-    
-vae %>% fit(
+## NOT RUN
+history_vae <- vae %>% fit(
   x = x_train, y = NULL,
-  epochs = 10,
+  epochs = 20,
   batch_size = batch_size,
   validation_data = list(x_test, NULL)
 )
+# def_VAE2 nice
 
 vae %>% save_model_weights_tf("def_vae/default_vae")
+saveRDS(history_vae, "def_vae/history.rds")
 ```
 
 
 ```{r}
 
 load_model_weights_tf(vae, "def_vae/default_vae")
+history_vae <- readRDS("def_vae/history.rds")
+plot(history_vae)
 
 ```
 
 ### Image generation 
 
-Once such a model is trained -- e.g. on MNIST, in our case -- we can use the `decoder` network to turn arbitrary latent space vectors into images:
+Once we have our trained model, we can use the `decoder` network to turn arbitrary latent space vectors into images. 
 
 ```{r}
 
-generate_num <- function(n = 15, digit_size = 28) {
-  # n  = Number of rows / columns of digits
-  # digit_size =  Height / width of digits in pixels
-  
-  # Transforms linearly spaced coordinates on the unit square through the inverse
-  # CDF (ppf) of the Gaussian to produce values of the latent variables z,
-  # because the prior of the latent space is Gaussian
-  grid_x <- qnorm(seq(0.05, 0.95, length.out = n))
-  grid_y <- qnorm(seq(0.05, 0.95, length.out = n))
-  
-  op <- par(mfrow = c(n, n), mar = c(0,0,0,0), bg = "black")
-  for (i in 1:length(grid_x)) {
-    yi <- grid_x[[i]]
-    for (j in 1:length(grid_y)) {
-      xi <- grid_y[[j]]
-      z_sample <- matrix(c(xi, yi), nrow = 1, ncol = 2)
-      z_sample <- t(replicate(batch_size, z_sample, simplify = "matrix"))
-      x_decoded <- decoder %>% predict(z_sample, batch_size = batch_size)
-      digit <- array_reshape(x_decoded[1,,,], dim = c(digit_size, digit_size))
-      plot(as.raster(digit))
-    }
-  }
-  par(op)
-}
+n = 15
+digit_size = 28
+# n  = Number of rows / columns of digits
+# digit_size =  Height / width of digits in pixels
 
-generate_num()
+# Transforms linearly spaced coordinates on the unit square through the inverse
+# CDF (ppf) of the Gaussian to produce values of the latent variables z,
+# because the prior of the latent space is Gaussian
+grid_x <- qnorm(seq(0.05, 0.95, length.out = n))
+grid_y <- qnorm(seq(0.05, 0.95, length.out = n))
+
+op <- par(mfrow = c(n, n), mar = c(0,0,0,0), bg = "black")
+for (i in 1:length(grid_x)) {
+  yi <- grid_x[[i]]
+  for (j in 1:length(grid_y)) {
+    xi <- grid_y[[j]]
+    z_sample <- matrix(c(xi, yi), nrow = 1, ncol = 2)
+    z_sample <- t(replicate(batch_size, z_sample, simplify = "matrix"))
+    x_decoded <- decoder %>% predict(z_sample, batch_size = batch_size)
+    digit <- array_reshape(x_decoded[1,,,], dim = c(digit_size, digit_size))
+    plot(as.raster(digit))
+  }
+}
+par(op)
+
 ```
 
-The grid of sampled digits shows a completely continuous distribution of the different digit classes, with one digit morphing into another as you follow a path through latent space. Specific directions in this space have a meaning, e.g. there is a direction for "four-ness", "one-ness", etc.
+The grid of sampled digits shows a completely continuous distribution of the different digit classes, with one digit morphing into another as you follow a path through latent space. Specific directions in this space have a meaning, e.g. there is a direction for "four-ness", "one-ness", etc. This is one main difference with traditional autoencoders. 
 
-## Exercise 1
+## Exercises
 
-Visualize the latent space and identify the different classes on a latent 2D place. 
+### A. Latent space visualization
+
+Visualize the latent space before and after training. In the same plot, show how the different classes are grouped. 
 
 Tip: use the `encoder` model and the `predict` function. 
 
 ```{r eval = solution, include = solution}
 
-# Solution
-x_test_encoded <- encoder %>% predict(x_test, batch_size = batch_size)
-library(ggplot2)
-lat_space <- data.frame(ls1 = x_test_encoded[,1], 
-                        ls2 = x_test_encoded[,2], 
-                        num = as.factor(y_test))
-ggplot(lat_space, aes(x=ls1, y=ls2, color = num)) + geom_point()
+## Solution
+# recompile the encoder model to have an untrained version
+input_img_un <- layer_input(shape = img_shape)
+x_un <- input_img_un %>% 
+  layer_conv_2d(filters = 32, kernel_size = 3, padding = "same", 
+                activation = "relu") %>% 
+  layer_conv_2d(filters = 64, kernel_size = 3, padding = "same", 
+                activation = "relu", strides = c(2, 2)) %>%
+  layer_conv_2d(filters = 64, kernel_size = 3, padding = "same", 
+                activation = "relu") %>%
+  layer_conv_2d(filters = 64, kernel_size = 3, padding = "same", 
+                activation = "relu") 
+x_un <- x_un %>% 
+  layer_flatten() %>% 
+  layer_dense(units = 32, activation = "relu")
+z_mean_un <- x_un %>% 
+  layer_dense(units = latent_dim)
+encoder_untrained <- keras_model(input_img_un, z_mean_un)
 
+# compute the middle layer
+z_untrained <- encoder_untrained %>% predict(x_test, batch_size = batch_size)
+z_trained <- encoder %>% predict(x_test, batch_size = batch_size)
+
+library(patchwork)
+lat_space <- data.frame(ls1_untrained = z_untrained[,1], 
+                        ls2_untrained = z_untrained[,2], 
+                        ls1           = z_trained[,1], 
+                        ls2           = z_trained[,2],
+                        num = as.factor(y_test))
+gp1 <- ggplot(lat_space, aes(x=ls1_untrained, y=ls2_untrained, color = num)) + geom_point()
+gp2 <- ggplot(lat_space, aes(x=ls1, y=ls2, color = num)) + geom_point()
+gp1 + gp2
 
 ```
 
 
-## Exercice 2
+### B. Image generation
 
 Produce a new pannel of numbers, this time using a non-normal distribution. 
 
-What changes with the grid of samples showed in the example ? 
-
+What changes with the grid of samples shown in the example ? 
 
 ```{r, eval = solution, include = solution}
 
-# Solution
+## Solution
 # We can reuse the `generate_num` but using for instance a uniform distribution. 
 n = 15
 digit_size = 28
@@ -316,21 +363,24 @@ for (i in 1:length(grid_x)) {
 }
 par(op)
 
+# By sampling on a non-normal distribution, we miss some classes (e.g. 0, 1, ...)
+# and we loose the continuity along the numbers. 
+
 ```
 
- 
 
-## Exercise 3
+### C. KL loss
 
 In this section we will see the importance of the KL loss. 
 
 Recompile the VAE that we created but by removing the KL loss. 
 
-Once you are done, you can load the corresponding VAE's weights that we already trained and generate a new pannel of numbers from it. What changes with the grid of samples showed in the example ? 
+Once you are done, you can load the corresponding VAE's weights that we already trained and generate a new pannel of numbers from it. What changes with the grid of samples shown in the example ? 
 
 ```{r eval = solution, include = solution}
-library(R6)
 
+## Solution
+# Warning, make sure that you didn't overwrite parts of the VAE in exercise 1 (e.g. 'x' or 'z_mean'). 
 CustomVariationalLayer <- R6Class("CustomVariationalLayer",
                                   
   inherit = KerasLayer,
@@ -378,33 +428,78 @@ vae %>% compile(
 
 ```{r, echo=TRUE, results='hide', eval=FALSE}
 
-vae %>% fit(
+history_vae <- vae %>% fit(
   x = x_train, y = NULL,
   epochs = 10,
   batch_size = batch_size,
   validation_data = list(x_test, NULL)
 )
 
-vae %>% save_model_weights_tf("noKL_vae2/noKL_vae")
+vae %>% save_model_weights_tf("noKL_vae/noKL_vae")
+saveRDS(history_vae, "noKL_vae/history.rds")
 
 ```
 
 
-```{r}
+```{r eval = solution, include = solution}
 
 load_model_weights_tf(vae, "noKL_vae/noKL_vae")
+history_vae <- readRDS("noKL_vae/history.rds")
+plot(history_vae)
 
 ```
 
 
-```{r, eval = solution}
+```{r eval = solution, include = solution}
 
-generate_num()
+n = 15
+digit_size = 28 
+grid_x <- qnorm(seq(0.05, 0.95, length.out = n))
+grid_y <- qnorm(seq(0.05, 0.95, length.out = n))
+
+op <- par(mfrow = c(n, n), mar = c(0,0,0,0), bg = "black")
+for (i in 1:length(grid_x)) {
+  yi <- grid_x[[i]]
+  for (j in 1:length(grid_y)) {
+    xi <- grid_y[[j]]
+    z_sample <- matrix(c(xi, yi), nrow = 1, ncol = 2)
+    z_sample <- t(replicate(batch_size, z_sample, simplify = "matrix"))
+    x_decoded <- decoder %>% predict(z_sample, batch_size = batch_size)
+    digit <- array_reshape(x_decoded[1,,,], dim = c(digit_size, digit_size))
+    plot(as.raster(digit))
+  }
+}
+par(op)
 
 ```
 
-## Exercise 4
+```{r eval = solution, include = solution}
 
-Draw a sketch of the VAE that we elaborated so that you understand the different layers that were used.
+## Solution
+# We can go back to the latent space representation to see how it changed
+z_noKL <- encoder %>% predict(x_test, batch_size = batch_size)
+
+lat_space$ls1_noKL <- z_noKL[,1]
+lat_space$ls2_noKL <- z_noKL[,2]
+
+gp1 <- ggplot(lat_space, aes(x=ls1, y=ls2, color = num)) + geom_point()
+gp2 <- ggplot(lat_space, aes(x=ls1_noKL, y=ls2_noKL, color = num)) + geom_point()
+gp1 + gp2
+# The latent space is not regularized anymore; the '1' class is no continuous
+# with the other classes and the space is not centered around (0,0). 
+
+```
+
+
+### D. Dimensionality variation
+
+Look at the models output shape and identify which layers are shrinking the input image (and to what dimensionality) and which layers are extending it (again, with the corresponding dimensionality). 
+
+## SessionInfo 
+
+
+```{r session info}
+sessionInfo()
+```
 
 
