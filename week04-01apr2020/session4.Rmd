@@ -16,13 +16,12 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(warning = FALSE, message = FALSE)
-
 solution = FALSE
 ```
 
 ***
 
-Based on [Deep Learning with R](https://www.manning.com/books/deep-learning-with-r) [exercises](https://github.com/jjallaire/deep-learning-with-r-notebooks/edit/master/notebooks/8.4-generating-images-with-vaes.Rmd)
+Based on [Deep Learning with R](https://www.manning.com/books/deep-learning-with-r) [notebook](https://github.com/jjallaire/deep-learning-with-r-notebooks/edit/master/notebooks/8.4-generating-images-with-vaes.Rmd)
 
 ***
 
@@ -38,7 +37,7 @@ suppressPackageStartupMessages({
 
 ```
 
-The following code shows in details how VAE is implemented. **You don't need to read/ understand each single line of code** as the exercises in the last sections will only focus on some parts. This session aims to show you how VAE works 'under the hood' but wrappers are of course available on internet. 
+The following code shows in details how VAE is implemented. **You don't need to read/ understand each single line of code** as the exercises in the last sections will only focus on some parts. This session aims to show you how VAE works 'under the hood' but wrappers are of course available online. 
 
 ## Default Variational autoencoder
 
@@ -85,7 +84,6 @@ Here we define:
 
 ```{r}
 
-
 img_shape <- c(28, 28, 1)
 batch_size <- 16
 latent_dim <- 2L  # Dimensionality of the latent space: a plane
@@ -93,19 +91,21 @@ latent_dim <- 2L  # Dimensionality of the latent space: a plane
 input_img <- layer_input(shape = img_shape)
 
 x <- input_img %>% 
-  layer_conv_2d(filters = 32, kernel_size = 3, padding = "same", 
+  layer_conv_2d(filters = 32, # number of output, ie, number of kernels
+                kernel_size = 3, # kernel shape 
+                padding = "same", # 0s padding to have input shape = output shape
                 activation = "relu") %>% 
   layer_conv_2d(filters = 64, kernel_size = 3, padding = "same", 
                 activation = "relu", strides = c(2, 2)) %>%
-  layer_conv_2d(filters = 64, kernel_size = 3, padding = "same", 
+  layer_conv_2d(filters = 64, kernel_size = 3, padding = "same",
                 activation = "relu") %>%
-  layer_conv_2d(filters = 64, kernel_size = 3, padding = "same", 
-                activation = "relu") 
+  layer_conv_2d(filters = 64, kernel_size = 3, padding = "same",
+                activation = "relu")
 
 shape_before_flattening <- k_int_shape(x)
 
 x <- x %>% 
-  layer_flatten() %>% 
+  layer_flatten() %>%
   layer_dense(units = 32, activation = "relu")
 
 z_mean <- x %>% 
@@ -114,8 +114,9 @@ z_mean <- x %>%
 z_log_var <- x %>% 
   layer_dense(units = latent_dim)
 
-encoder <- keras_model(input_img, z_mean)
+encoder <- keras_model(input_img, c(z_mean, z_log_var))
 encoder
+
 ```
 
 ### Latent space
@@ -209,7 +210,7 @@ y <- list(input_img, z_decoded) %>%
 
 ```
 
-Finally, we instantiate and train the model. Since the loss has been taken care of in our custom layer, we don't specify an external loss at compile time (`loss = NULL`), which in turns means that we won't pass target data during training (as you will see, we only pass `x_train` to the model in `fit`).
+Finally, we instantiate and train the model. Since the loss has been taken care of in our custom layer, we don't specify an external loss at compile time (`loss = NULL`), which in turns means that we won't pass target data during training (as you will see, we only pass `x_train` to the model in `fit` ).
 
 ```{r}
 vae <- keras_model(input_img, y)
@@ -237,17 +238,23 @@ history_vae <- vae %>% fit(
   batch_size = batch_size,
   validation_data = list(x_test, NULL)
 )
-# def_VAE2 nice
 
 vae %>% save_model_weights_tf("def_vae/default_vae")
 saveRDS(history_vae, "def_vae/history.rds")
+saveRDS(history_vae, "def_vae/history3_5.rds", version = 2) 
+
 ```
 
 
 ```{r}
 
 load_model_weights_tf(vae, "def_vae/default_vae")
-history_vae <- readRDS("def_vae/history.rds")
+if (getRversion() < '3.5.0') {
+  history_vae <- readRDS("def_vae/history3_5.rds.rds")
+} else {
+  history_vae <- readRDS("def_vae/history.rds")
+}
+
 plot(history_vae)
 
 ```
@@ -281,7 +288,6 @@ for (i in 1:length(grid_x)) {
     plot(as.raster(digit))
   }
 }
-par(op)
 
 ```
 
@@ -314,17 +320,20 @@ x_un <- x_un %>%
   layer_dense(units = 32, activation = "relu")
 z_mean_un <- x_un %>% 
   layer_dense(units = latent_dim)
-encoder_untrained <- keras_model(input_img_un, z_mean_un)
+z_log_var_un <- x_un %>% 
+  layer_dense(units = latent_dim)
+
+encoder_untrained <- keras_model(input_img_un, c(z_mean_un, z_log_var_un))
 
 # compute the middle layer
 z_untrained <- encoder_untrained %>% predict(x_test, batch_size = batch_size)
 z_trained <- encoder %>% predict(x_test, batch_size = batch_size)
 
 library(patchwork)
-lat_space <- data.frame(ls1_untrained = z_untrained[,1], 
-                        ls2_untrained = z_untrained[,2], 
-                        ls1           = z_trained[,1], 
-                        ls2           = z_trained[,2],
+lat_space <- data.frame(ls1_untrained = z_untrained[[1]][,1], 
+                        ls2_untrained = z_untrained[[1]][,2], 
+                        ls1           = z_trained[[1]][,1], 
+                        ls2           = z_trained[[1]][,2],
                         num = as.factor(y_test))
 gp1 <- ggplot(lat_space, aes(x=ls1_untrained, y=ls2_untrained, color = num)) + geom_point()
 gp2 <- ggplot(lat_space, aes(x=ls1, y=ls2, color = num)) + geom_point()
@@ -361,7 +370,6 @@ for (i in 1:length(grid_x)) {
     plot(as.raster(digit))
   }
 }
-par(op)
 
 # By sampling on a non-normal distribution, we miss some classes (e.g. 0, 1, ...)
 # and we loose the continuity along the numbers. 
@@ -427,16 +435,17 @@ vae %>% compile(
 
 
 ```{r, echo=TRUE, results='hide', eval=FALSE}
-
-history_vae <- vae %>% fit(
-  x = x_train, y = NULL,
-  epochs = 10,
-  batch_size = batch_size,
-  validation_data = list(x_test, NULL)
-)
+    
+    history_vae <- vae %>% fit(
+      x = x_train, y = NULL,
+      epochs = 10,
+      batch_size = batch_size,
+      validation_data = list(x_test, NULL)
+    )
 
 vae %>% save_model_weights_tf("noKL_vae/noKL_vae")
 saveRDS(history_vae, "noKL_vae/history.rds")
+saveRDS(history_vae, "noKL_vae/history3_5.rds", version = 2) 
 
 ```
 
@@ -444,7 +453,11 @@ saveRDS(history_vae, "noKL_vae/history.rds")
 ```{r eval = solution, include = solution}
 
 load_model_weights_tf(vae, "noKL_vae/noKL_vae")
-history_vae <- readRDS("noKL_vae/history.rds")
+if (getRversion() < '3.5.0') {
+    history_vae <- readRDS("noKL_vae/history3_5.rds.rds")
+} else {
+    history_vae <- readRDS("noKL_vae/history.rds")
+}
 plot(history_vae)
 
 ```
@@ -469,24 +482,26 @@ for (i in 1:length(grid_x)) {
     plot(as.raster(digit))
   }
 }
-par(op)
+# Without KL loss, the decoder is not able to retrieve some classes (eg 1, 7, 9).
+# we can look at the latent space to see why
 
 ```
 
 ```{r eval = solution, include = solution}
 
-## Solution
 # We can go back to the latent space representation to see how it changed
 z_noKL <- encoder %>% predict(x_test, batch_size = batch_size)
 
-lat_space$ls1_noKL <- z_noKL[,1]
-lat_space$ls2_noKL <- z_noKL[,2]
+lat_space$ls1_noKL <- z_noKL[[1]][,1]
+lat_space$ls2_noKL <- z_noKL[[1]][,2]
 
 gp1 <- ggplot(lat_space, aes(x=ls1, y=ls2, color = num)) + geom_point()
 gp2 <- ggplot(lat_space, aes(x=ls1_noKL, y=ls2_noKL, color = num)) + geom_point()
 gp1 + gp2
-# The latent space is not regularized anymore; the '1' class is no continuous
-# with the other classes and the space is not centered around (0,0). 
+# The latent space is not regularized anymore; the '1' class is not continuous
+# with the other classes and the space is not centered around c(0,0). 
+# ==> some classes that are far from the center of the reduced space are typically
+# the classes that can not be retrieved in the above plot (eg 1, 7, 9)
 
 ```
 
@@ -494,6 +509,20 @@ gp1 + gp2
 ### D. Dimensionality variation
 
 Look at the models output shape and identify which layers are shrinking the input image (and to what dimensionality) and which layers are extending it (again, with the corresponding dimensionality). 
+
+```{r eval = solution, include = solution}
+
+## Solution
+# We can look at the Encoder and Decoder summaries: 
+encoder
+decoder
+# where we can see that the following layers modify the dimensionality; 
+# - conv2d_1 (Conv2D)
+# - flatten (Flatten) 
+# - reshape (Reshape) 
+# - conv2d_transpose
+```
+
 
 ## SessionInfo 
 
