@@ -5,7 +5,7 @@ Linked to [https://osf.io/962nv/](https://osf.io/962nv/).
 
 Topics (links to slides):
 
-[week01-11mar2020/Session1MethodsSeminarSS20_slides.pdf](L1: Introduction to Machine Learning: R/keras Part 1 (tensors, MNIST classification)
+[./week01-11mar2020/Session1MethodsSeminarSS20_slides.pdf](L1: Introduction to Machine Learning: R/keras Part 1 (tensors, MNIST classification)
 
 [week02-18mar2020/Lecture_Slides.pdf](L2: Introduction to Machine Learning: R/keras Part 2 (scalar/vector regression, multilevel classification))
 
