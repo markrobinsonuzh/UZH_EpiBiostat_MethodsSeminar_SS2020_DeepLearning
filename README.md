@@ -7,7 +7,7 @@ Topics (links to slides):
 
 [week01-11mar2020/Session1MethodsSeminarSS20_slides.pdf](L1: Introduction to Machine Learning: R/keras Part 1 (tensors, MNIST classification))
 
-(L2: Introduction to Machine Learning: R/keras Part 2 (scalar/vector regression, multilevel classification))[week02-18mar2020/Lecture_Slides.pdf]
+[L2: Introduction to Machine Learning: R/keras Part 2 (scalar/vector regression, multilevel classification)](week02-18mar2020/Lecture_Slides.pdf)
 
 [week03-25mar2020/methods3_ml_presentation.pdf](L3: Network Topologies + Practical Learning Strategies (feature engineering, overfitting, etc.))
 
