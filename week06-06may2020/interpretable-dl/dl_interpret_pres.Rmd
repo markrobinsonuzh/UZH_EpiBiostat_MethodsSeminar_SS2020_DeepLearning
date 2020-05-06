@@ -568,3 +568,8 @@ file.remove("hm-temp.png")
 - [A curated list of machine learning interpretability
   resources](https://github.com/jphall663/awesome-machine-learning-interpretability)
 - [Lucid: A collection of infrastructure and tools for research in neural network interpretability.](https://github.com/tensorflow/lucid) 
+
+```{r, include=FALSE, eval=FALSE}
+## NOTE: to generate pdf (Chromium required)
+## pagedown::chrome_print("dl_interpret_pres.Rmd")
+```
